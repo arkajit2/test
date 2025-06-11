@@ -88,7 +88,7 @@ def save_data(full_text):
     try:
         with open(DATA_STORE, "w", encoding="utf-8") as f:
             json.dump({"data": full_text}, f, ensure_ascii=False) # ensure_ascii=False for proper Unicode saving
-        st.success(f"✅ Data successfully saved to `{DATA_STORE}`.")
+        # st.success(f"✅ Data successfully saved to `{DATA_STORE}`.") # Moved success message
     except Exception as e:
         st.error(f"❌ Error saving data: {e}")
 
@@ -126,10 +126,17 @@ with tab1:
         st.subheader("Upload Files")
         uploaded_file = st.file_uploader("Upload CSV, JSON, TXT, or Excel (.xlsx)", type=["csv", "json", "txt", "xlsx"])
 
+        # Store processed_text in session state for download
+        if "processed_upload_text" not in st.session_state:
+            st.session_state.processed_upload_text = None
+        if "last_upload_filename" not in st.session_state:
+            st.session_state.last_upload_filename = None
+
+
         if uploaded_file:
             file_type = uploaded_file.name.split('.')[-1].lower()
             raw_text = ""
-            df_preview = None
+            df_preview = None # Keep df_preview for internal processing, but not for display
 
             try:
                 if file_type == "csv":
@@ -152,35 +159,49 @@ with tab1:
                     df_preview = pd.read_excel(uploaded_file, engine='openpyxl')
                     raw_text = df_preview.to_string(index=False)
 
-                save_data(raw_text) # Call save_data here
-                
-                # --- MODIFICATION START ---
+                save_data(raw_text) # Call save_data here to save the processed text
                 st.success("✅ File uploaded and processed. Knowledge base updated.")
                 
-                # Provide download button for the processed raw_text
-                if raw_text:
-                    st.download_button(
-                        label="Download Processed Knowledge Base",
-                        data=raw_text.encode("utf-8"), # Ensure data is bytes
-                        file_name="processed_knowledge_data.txt",
-                        mime="text/plain",
-                        key="download_knowledge_button"
-                    )
-                # --- MODIFICATION END ---
+                # Store the processed text and original filename in session state
+                st.session_state.processed_upload_text = raw_text
+                st.session_state.last_upload_filename = uploaded_file.name
+
+                # Streamlit automatically reruns on upload, so the download button will appear below
+                # No need for st.rerun() here just for the button.
 
             except Exception as e:
                 st.error(f"❌ Failed to process file: {e}")
-        
+                st.session_state.processed_upload_text = None # Clear if error
+                st.session_state.last_upload_filename = None
+
+
+        # Display download button if there's processed text available
+        if st.session_state.processed_upload_text:
+            st.download_button(
+                label=f"Download Processed: {st.session_state.last_upload_filename.split('.')[0]}_processed.txt",
+                data=st.session_state.processed_upload_text.encode("utf-8"),
+                file_name=f"{st.session_state.last_upload_filename.split('.')[0]}_processed.txt",
+                mime="text/plain",
+                key="download_processed_knowledge"
+            )
+            # Optional: Clear the session state after download button is displayed,
+            # so it only appears after a fresh upload.
+            # However, for continuous availability, you might keep it.
+            # For this request, we keep it visible after upload.
+
+
         st.subheader("Current Knowledge Base")
         current_knowledge = load_data()
         if current_knowledge:
-            st.text_area("Existing Knowledge Data", current_knowledge, height=300, key="current_knowledge_display", disabled=True)
+            st.text_area("Existing Knowledge Data (Content used by the bot)", current_knowledge, height=300, key="current_knowledge_display", disabled=True)
             if st.button("Clear Knowledge Base", key="clear_knowledge_button"):
                 save_data("") # Clear the data
+                st.session_state.processed_upload_text = None # Also clear this
+                st.session_state.last_upload_filename = None
                 st.success("Knowledge base cleared.")
                 st.rerun()
         else:
-            st.info("No knowledge data uploaded yet.")
+            st.info("No knowledge data uploaded yet. Upload a file to populate it.")
 
 # --- Chat UI ---
 with tab2:
@@ -193,7 +214,7 @@ with tab2:
 
     # Display chat history within a scrollable container
     chat_messages_placeholder = st.container()
-    
+
     with chat_messages_placeholder:
         for msg in st.session_state.chat_history:
             css_class = "user-message" if msg["role"] == "user" else "bot-message"
@@ -213,21 +234,18 @@ with tab2:
 
             messages = []
             if context:
-                # Provide clear instructions for using the context
                 messages.append({"role": "system", "content": f"You are Fraoula, a helpful AI assistant. Answer questions based *strictly* on the following knowledge provided. If the answer is not in the provided knowledge, state that you don't have enough information. Do not make up answers.\nKnowledge: {context}"})
             else:
                 messages.append({"role": "system", "content": "You are Fraoula, a helpful AI assistant. Answer questions to the best of your ability. If you don't know something, you can say so."})
-            
+
             # Add previous chat history for continuity
-            for msg in st.session_state.chat_history:
+            # Only add messages from the existing chat history, not the current user_msg which is already added
+            for msg in st.session_state.chat_history[:-1]: # Exclude the very last user message already appended
                 if msg["role"] == "user" or msg["role"] == "assistant":
                     messages.append({"role": msg["role"], "content": msg["content"]})
             
-            # Ensure the last message is always the current user input
-            # This handles cases where chat_history might be longer than desirable for the model
-            # For longer histories, consider a summary or truncation strategy
-            if messages[-1]["content"] != user_msg: # Prevent double-adding the user's message if already appended above
-                 messages.append({"role": "user", "content": user_msg})
+            # Ensure the current user message is added as the last in the messages list for the API call
+            messages.append({"role": "user", "content": user_msg})
 
 
             payload = {
@@ -248,7 +266,7 @@ with tab2:
                 except json.JSONDecodeError:
                     bot_reply = "❌ Error: Could not decode JSON response from the API. Invalid API response."
                 except IndexError:
-                    bot_reply = "❌ Error: API response did not contain expected message structure."
+                    bot_reply = "❌ Error: API response did not contain expected message structure (e.g., missing 'choices' or 'message')."
                 except Exception as e:
                     bot_reply = f"❌ An unexpected error occurred: {e}"
 
