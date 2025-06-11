@@ -17,41 +17,35 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# --- Theme Colors (Fraoula Violet) ---
-PRIMARY_COLOR = "#9400D3"
-SECONDARY_COLOR = "#C779D9"
-BACKGROUND_COLOR = "#1E003E"
-TEXT_COLOR = "#FFFFFF"
-
 # --- Styling ---
-st.markdown(f"""
+st.markdown("""
     <style>
-    .stApp {{
-        background-color: {BACKGROUND_COLOR};
-        color: {TEXT_COLOR};
+    .stApp {
+        background-color: #1E003E;
+        color: #FFFFFF;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }}
-    .stTextInput > div > div > input {{
+    }
+    .stTextInput > div > div > input {
         background-color: #2a004f;
-        border: 2px solid {PRIMARY_COLOR};
+        border: 2px solid #9400D3;
         border-radius: 8px;
-        color: {TEXT_COLOR};
+        color: #FFFFFF;
         padding: 10px;
-    }}
-    .stButton > button {{
-        background-color: {PRIMARY_COLOR};
+    }
+    .stButton > button {
+        background-color: #9400D3;
         color: white;
         border-radius: 8px;
         padding: 10px 20px;
         font-weight: 600;
         border: none;
         cursor: pointer;
-    }}
-    .stButton > button:hover {{
-        background-color: {SECONDARY_COLOR};
-    }}
-    .user-message {{
-        background-color: {SECONDARY_COLOR};
+    }
+    .stButton > button:hover {
+        background-color: #C779D9;
+    }
+    .user-message {
+        background-color: #C779D9;
         padding: 10px;
         border-radius: 12px 12px 0 12px;
         margin: 8px 0;
@@ -60,8 +54,8 @@ st.markdown(f"""
         margin-left: auto;
         color: white;
         font-size: 1rem;
-    }}
-    .bot-message {{
+    }
+    .bot-message {
         background-color: #3b0070;
         padding: 10px;
         border-radius: 12px 12px 12px 0;
@@ -69,22 +63,31 @@ st.markdown(f"""
         text-align: left;
         max-width: 75%;
         margin-right: auto;
-        color: {TEXT_COLOR};
+        color: #FFFFFF;
         font-size: 1rem;
-    }}
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # --- Helper Functions ---
-def save_data(full_text):
-    with open(DATA_STORE, "w", encoding="utf-8") as f:
-        json.dump({"data": full_text}, f)
+def save_data(new_text, filename):
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as f:
+            existing_data = json.load(f)
+    else:
+        existing_data = {"data": []}
 
-def load_data():
-    if not os.path.exists(DATA_STORE):
-        return ""
-    with open(DATA_STORE, "r", encoding="utf-8") as f:
-        return json.load(f).get("data", "")
+    if new_text not in existing_data["data"]:
+        existing_data["data"].append(new_text)
+
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(existing_data, f, indent=2)
+
+def load_data(filename):
+    if not os.path.exists(filename):
+        return []
+    with open(filename, "r", encoding="utf-8") as f:
+        return json.load(f).get("data", [])
 
 # --- UI Layout ---
 tab1, tab2 = st.tabs(["Dev", "User"])
@@ -104,7 +107,7 @@ with tab1:
             else:
                 st.error("❌ Incorrect password.")
     else:
-        st.subheader("Upload Files")
+        st.subheader("Upload Knowledge Base Files")
         uploaded_file = st.file_uploader("Upload CSV, JSON, TXT, or Excel (.xlsx)", type=["csv", "json", "txt", "xlsx"])
 
         if uploaded_file:
@@ -114,35 +117,38 @@ with tab1:
 
             try:
                 if file_type == "csv":
-                    try:
-                        df_preview = pd.read_csv(uploaded_file, encoding="utf-8")
-                    except UnicodeDecodeError:
-                        df_preview = pd.read_csv(uploaded_file, encoding="ISO-8859-1")
+                    df_preview = pd.read_csv(uploaded_file)
                     raw_text = df_preview.to_string(index=False)
                 elif file_type == "json":
-                    data = json.load(uploaded_file)
-                    raw_text = json.dumps(data, indent=2)
-                    if isinstance(data, list):
-                        df_preview = pd.DataFrame(data)
-                    elif isinstance(data, dict):
-                        df_preview = pd.json_normalize(data)
+                    json_data = json.load(uploaded_file)
+                    raw_text = json.dumps(json_data, indent=2)
+                    df_preview = pd.json_normalize(json_data) if isinstance(json_data, dict) else pd.DataFrame(json_data)
                 elif file_type == "txt":
                     raw_text = uploaded_file.read().decode("utf-8")
                 elif file_type == "xlsx":
-                    df_preview = pd.read_excel(uploaded_file, engine='openpyxl')
+                    df_preview = pd.read_excel(uploaded_file)
                     raw_text = df_preview.to_string(index=False)
 
-                save_data(raw_text)
-                st.success("✅ File uploaded and saved to `knowledge_data.json`.")
+                save_data(raw_text, DATA_STORE)
+                st.success("✅ Data added to knowledge base.")
 
                 if df_preview is not None:
-                    st.subheader("Data Preview")
+                    st.subheader("Preview of Uploaded Data")
                     st.dataframe(df_preview)
                 else:
-                    st.text_area("Preview", raw_text, height=200)
+                    st.text_area("Preview of Uploaded Text", raw_text, height=200)
 
             except Exception as e:
                 st.error(f"❌ Failed to read file: {e}")
+
+        if os.path.exists(DATA_STORE):
+            with open(DATA_STORE, "rb") as f:
+                st.download_button(
+                    label="📥 Download Full Knowledge Base",
+                    data=f,
+                    file_name="knowledge_data.json",
+                    mime="application/json"
+                )
 
 # --- Chat UI ---
 with tab2:
@@ -151,7 +157,8 @@ with tab2:
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    context = load_data()
+    context_list = load_data(DATA_STORE)
+    combined_context = "\n\n---\n\n".join(context_list)
 
     chat_container = st.container()
     with chat_container:
@@ -171,8 +178,8 @@ with tab2:
             st.session_state.chat_history.append({"role": "user", "content": user_msg})
 
             messages = []
-            if context:
-                messages.append({"role": "system", "content": f"Use this knowledge:\n{context}"})
+            if combined_context:
+                messages.append({"role": "system", "content": f"Use this knowledge:\n{combined_context}"})
             messages += [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_history]
 
             payload = {
