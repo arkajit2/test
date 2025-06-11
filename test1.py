@@ -153,12 +153,20 @@ with tab1:
                     raw_text = df_preview.to_string(index=False)
 
                 save_data(raw_text) # Call save_data here
-
-                if df_preview is not None and not df_preview.empty: # Check if DataFrame is not empty
-                    st.subheader("Data Preview")
-                    st.dataframe(df_preview)
-                elif raw_text: # Display raw text if no DataFrame preview
-                    st.text_area("Preview of uploaded content:", raw_text, height=200)
+                
+                # --- MODIFICATION START ---
+                st.success("✅ File uploaded and processed. Knowledge base updated.")
+                
+                # Provide download button for the processed raw_text
+                if raw_text:
+                    st.download_button(
+                        label="Download Processed Knowledge Base",
+                        data=raw_text.encode("utf-8"), # Ensure data is bytes
+                        file_name="processed_knowledge_data.txt",
+                        mime="text/plain",
+                        key="download_knowledge_button"
+                    )
+                # --- MODIFICATION END ---
 
             except Exception as e:
                 st.error(f"❌ Failed to process file: {e}")
