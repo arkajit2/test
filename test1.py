@@ -8,13 +8,15 @@ import requests
 st.set_page_config(page_title="Fraoula Chatbot", layout="wide")
 
 DATA_STORE = "knowledge_data.json"
-DEV_PASSWORD = "fraoula123"
+DEV_PASSWORD = "fraoula123" # Consider moving this to st.secrets as well for production
 
 # Safely get API key from Streamlit secrets
 try:
     API_KEY = st.secrets["openrouter"]["api_key"]
 except KeyError:
-    st.error("Error: OpenRouter API key not found in Streamlit secrets. Please add it to your `secrets.toml` file.")
+    st.error("Error: OpenRouter API key not found in Streamlit secrets. "
+             "Please add it to your `secrets.toml` file like:\n"
+             "```toml\n[openrouter]\napi_key=\"sk-YOUR_API_KEY\"\n```")
     st.stop() # Stop the app if API key is not found
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -66,7 +68,7 @@ st.markdown(f"""
         margin-left: auto;
         color: white;
         font-size: 1rem;
-        word-wrap: break-word; /* Added for long words/URLs */
+        word-wrap: break-word;
     }}
     .bot-message {{
         background-color: #3b0070;
@@ -78,7 +80,7 @@ st.markdown(f"""
         margin-right: auto;
         color: {TEXT_COLOR};
         font-size: 1rem;
-        word-wrap: break-word; /* Added for long words/URLs */
+        word-wrap: break-word;
     }}
     </style>
 """, unsafe_allow_html=True)
@@ -87,10 +89,10 @@ st.markdown(f"""
 def save_data(full_text):
     try:
         with open(DATA_STORE, "w", encoding="utf-8") as f:
-            json.dump({"data": full_text}, f, ensure_ascii=False) # ensure_ascii=False for proper Unicode saving
-        # st.success(f"✅ Data successfully saved to `{DATA_STORE}`.") # Moved success message
+            json.dump({"data": full_text}, f, ensure_ascii=False)
+        # st.success moved to where it's contextually appropriate (after upload success)
     except Exception as e:
-        st.error(f"❌ Error saving data: {e}")
+        st.error(f"❌ Error saving data to `{DATA_STORE}`: {e}")
 
 def load_data():
     if not os.path.exists(DATA_STORE):
@@ -99,10 +101,10 @@ def load_data():
         with open(DATA_STORE, "r", encoding="utf-8") as f:
             return json.load(f).get("data", "")
     except json.JSONDecodeError:
-        st.error(f"❌ Error decoding JSON from `{DATA_STORE}`. File might be corrupted.")
+        st.error(f"❌ Error decoding JSON from `{DATA_STORE}`. File might be corrupted or empty.")
         return ""
     except Exception as e:
-        st.error(f"❌ Error loading data: {e}")
+        st.error(f"❌ Error loading data from `{DATA_STORE}`: {e}")
         return ""
 
 # --- UI Layout ---
@@ -113,6 +115,12 @@ with tab1:
     st.header("Developer Login")
     if "dev_auth" not in st.session_state:
         st.session_state.dev_auth = False
+    
+    # Initialize session state for processed text and filename if not present
+    if "processed_upload_text" not in st.session_state:
+        st.session_state.processed_upload_text = None
+    if "last_upload_filename" not in st.session_state:
+        st.session_state.last_upload_filename = None
 
     if not st.session_state.dev_auth:
         password = st.text_input("Enter Developer Password", type="password", key="dev_password_input")
@@ -123,85 +131,78 @@ with tab1:
             else:
                 st.error("❌ Incorrect password.")
     else:
-        st.subheader("Upload Files")
+        st.subheader("Upload Knowledge File")
         uploaded_file = st.file_uploader("Upload CSV, JSON, TXT, or Excel (.xlsx)", type=["csv", "json", "txt", "xlsx"])
-
-        # Store processed_text in session state for download
-        if "processed_upload_text" not in st.session_state:
-            st.session_state.processed_upload_text = None
-        if "last_upload_filename" not in st.session_state:
-            st.session_state.last_upload_filename = None
-
 
         if uploaded_file:
             file_type = uploaded_file.name.split('.')[-1].lower()
-            raw_text = ""
-            df_preview = None # Keep df_preview for internal processing, but not for display
+            raw_text = "" # This will hold the text extracted from the file
+            df_temp = None # Used for pandas processing, not for direct display in body
 
             try:
+                # Process file based on type
                 if file_type == "csv":
                     try:
-                        df_preview = pd.read_csv(uploaded_file, encoding="utf-8")
+                        df_temp = pd.read_csv(uploaded_file, encoding="utf-8")
                     except UnicodeDecodeError:
                         uploaded_file.seek(0) # Reset file pointer for re-reading
-                        df_preview = pd.read_csv(uploaded_file, encoding="ISO-8859-1")
-                    raw_text = df_preview.to_string(index=False)
+                        df_temp = pd.read_csv(uploaded_file, encoding="ISO-8859-1")
+                    raw_text = df_temp.to_string(index=False)
                 elif file_type == "json":
                     data = json.load(uploaded_file)
                     raw_text = json.dumps(data, indent=2, ensure_ascii=False)
-                    if isinstance(data, list):
-                        df_preview = pd.DataFrame(data)
+                    # For JSON, df_temp might be created for internal processing but not directly displayed
+                    if isinstance(data, list) and all(isinstance(i, dict) for i in data):
+                        df_temp = pd.DataFrame(data)
                     elif isinstance(data, dict):
-                        df_preview = pd.json_normalize(data)
+                        df_temp = pd.json_normalize(data)
                 elif file_type == "txt":
                     raw_text = uploaded_file.read().decode("utf-8")
                 elif file_type == "xlsx":
-                    df_preview = pd.read_excel(uploaded_file, engine='openpyxl')
-                    raw_text = df_preview.to_string(index=False)
+                    df_temp = pd.read_excel(uploaded_file, engine='openpyxl')
+                    raw_text = df_temp.to_string(index=False)
 
-                save_data(raw_text) # Call save_data here to save the processed text
-                st.success("✅ File uploaded and processed. Knowledge base updated.")
-                
-                # Store the processed text and original filename in session state
+                # Save the processed raw_text to the knowledge_data.json file
+                save_data(raw_text)
+                st.success(f"✅ File '{uploaded_file.name}' processed and saved to knowledge base.")
+
+                # Store processed text and filename in session state for download button
                 st.session_state.processed_upload_text = raw_text
                 st.session_state.last_upload_filename = uploaded_file.name
 
-                # Streamlit automatically reruns on upload, so the download button will appear below
-                # No need for st.rerun() here just for the button.
-
             except Exception as e:
-                st.error(f"❌ Failed to process file: {e}")
-                st.session_state.processed_upload_text = None # Clear if error
+                st.error(f"❌ Failed to process file '{uploaded_file.name}': {e}")
+                st.session_state.processed_upload_text = None # Clear on error
                 st.session_state.last_upload_filename = None
-
-
-        # Display download button if there's processed text available
+        
+        # Display download button if there's processed text in session state from a successful upload
         if st.session_state.processed_upload_text:
             st.download_button(
-                label=f"Download Processed: {st.session_state.last_upload_filename.split('.')[0]}_processed.txt",
-                data=st.session_state.processed_upload_text.encode("utf-8"),
+                label=f"Download Last Processed File ({st.session_state.last_upload_filename.split('.')[0]}_processed.txt)",
+                data=st.session_state.processed_upload_text.encode("utf-8"), # Data must be bytes
                 file_name=f"{st.session_state.last_upload_filename.split('.')[0]}_processed.txt",
                 mime="text/plain",
-                key="download_processed_knowledge"
+                key="download_processed_knowledge_button" # Unique key
             )
-            # Optional: Clear the session state after download button is displayed,
-            # so it only appears after a fresh upload.
-            # However, for continuous availability, you might keep it.
-            # For this request, we keep it visible after upload.
+            st.info("The download button shows the content of the *last successfully uploaded* and processed file.")
+        else:
+            st.info("Upload a file above to process it and enable the download option for the chunk.")
 
 
-        st.subheader("Current Knowledge Base")
-        current_knowledge = load_data()
-        if current_knowledge:
-            st.text_area("Existing Knowledge Data (Content used by the bot)", current_knowledge, height=300, key="current_knowledge_display", disabled=True)
+        st.subheader("Current Knowledge Base (Content used by the bot)")
+        # This text area always displays the content of the DATA_STORE file
+        current_knowledge_content = load_data()
+        if current_knowledge_content:
+            st.text_area("Full Knowledge Data:", current_knowledge_content, height=300, key="current_knowledge_display", disabled=True)
             if st.button("Clear Knowledge Base", key="clear_knowledge_button"):
-                save_data("") # Clear the data
-                st.session_state.processed_upload_text = None # Also clear this
+                save_data("") # Clear the data file
+                st.session_state.processed_upload_text = None # Clear session state for download
                 st.session_state.last_upload_filename = None
                 st.success("Knowledge base cleared.")
-                st.rerun()
+                st.rerun() # Rerun to reflect the cleared state
         else:
-            st.info("No knowledge data uploaded yet. Upload a file to populate it.")
+            st.info("The knowledge base is currently empty.")
+
 
 # --- Chat UI ---
 with tab2:
@@ -210,7 +211,7 @@ with tab2:
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    context = load_data()
+    context = load_data() # Load context for the chatbot
 
     # Display chat history within a scrollable container
     chat_messages_placeholder = st.container()
@@ -230,45 +231,55 @@ with tab2:
 
         if send_btn and user_input.strip():
             user_msg = user_input.strip()
+            # Append user message first so it appears immediately
             st.session_state.chat_history.append({"role": "user", "content": user_msg})
 
             messages = []
+            # Construct system message based on context availability
             if context:
-                messages.append({"role": "system", "content": f"You are Fraoula, a helpful AI assistant. Answer questions based *strictly* on the following knowledge provided. If the answer is not in the provided knowledge, state that you don't have enough information. Do not make up answers.\nKnowledge: {context}"})
+                system_instruction = (
+                    f"You are Fraoula, a helpful AI assistant. Answer questions based *strictly* on the "
+                    f"following knowledge provided. If the answer is not in the provided knowledge, "
+                    f"state that you don't have enough information. Do not make up answers.\n"
+                    f"Knowledge: {context}"
+                )
             else:
-                messages.append({"role": "system", "content": "You are Fraoula, a helpful AI assistant. Answer questions to the best of your ability. If you don't know something, you can say so."})
+                system_instruction = (
+                    "You are Fraoula, a helpful AI assistant. Answer questions to the best of your ability. "
+                    "If you don't know something, you can say so."
+                )
+            messages.append({"role": "system", "content": system_instruction})
 
-            # Add previous chat history for continuity
-            # Only add messages from the existing chat history, not the current user_msg which is already added
-            for msg in st.session_state.chat_history[:-1]: # Exclude the very last user message already appended
-                if msg["role"] == "user" or msg["role"] == "assistant":
+            # Add previous chat history for continuity (excluding the very last user message just appended)
+            # This ensures chat history is sent in order, with the *current* user message at the very end
+            for msg in st.session_state.chat_history[:-1]:
+                if msg["role"] in ["user", "assistant"]:
                     messages.append({"role": msg["role"], "content": msg["content"]})
-            
-            # Ensure the current user message is added as the last in the messages list for the API call
+
+            # Append the current user message as the final message in the sequence
             messages.append({"role": "user", "content": user_msg})
 
-
             payload = {
-                "model": "meta-llama/llama-3.3-8b-instruct:free", # Using the specified model
+                "model": "meta-llama/llama-3.3-8b-instruct:free",
                 "messages": messages,
-                "max_tokens": 500, # Increased max_tokens for potentially longer responses
+                "max_tokens": 500,
                 "temperature": 0.7,
-                "top_p": 0.9, # Added top_p for more diverse responses
+                "top_p": 0.9,
             }
 
             with st.spinner("Thinking..."):
                 try:
-                    res = requests.post(API_URL, headers=HEADERS, json=payload, timeout=60) # Added timeout
-                    res.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                    res = requests.post(API_URL, headers=HEADERS, json=payload, timeout=60)
+                    res.raise_for_status()
                     bot_reply = res.json()["choices"][0]["message"]["content"]
                 except requests.exceptions.RequestException as req_e:
                     bot_reply = f"❌ Network or API error: {req_e}. Please check your connection and API key."
                 except json.JSONDecodeError:
                     bot_reply = "❌ Error: Could not decode JSON response from the API. Invalid API response."
                 except IndexError:
-                    bot_reply = "❌ Error: API response did not contain expected message structure (e.g., missing 'choices' or 'message')."
+                    bot_reply = "❌ Error: API response did not contain expected message structure (e.g., missing 'choices' or 'message' in response)."
                 except Exception as e:
                     bot_reply = f"❌ An unexpected error occurred: {e}"
 
             st.session_state.chat_history.append({"role": "assistant", "content": bot_reply})
-            st.rerun()
+            st.rerun() # Rerun to display the new messages
