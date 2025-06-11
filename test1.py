@@ -76,34 +76,15 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --- Helper Functions ---
-def chunk_text(text, max_chars=500):
-    """Split text into chunks of max_chars, preserving order."""
-    return [text[i:i+max_chars] for i in range(0, len(text), max_chars)]
-
-def save_data(chunks):
-    data = [{"chunk": c} for c in chunks]
-    existing = []
-    if os.path.exists(DATA_STORE):
-        with open(DATA_STORE, "r") as f:
-            existing = json.load(f)
-    with open(DATA_STORE, "w") as f:
-        json.dump(existing + data, f)
+def save_data(full_text):
+    with open(DATA_STORE, "w", encoding="utf-8") as f:
+        json.dump({"data": full_text}, f)
 
 def load_data():
     if not os.path.exists(DATA_STORE):
-        return []
-    with open(DATA_STORE, "r") as f:
-        raw = json.load(f)
-    return [item["chunk"] for item in raw]
-
-def keyword_search(query, chunks, top_k=3):
-    """Simple keyword frequency-based ranking, returns top_k chunks."""
-    ranked = sorted(
-        chunks,
-        key=lambda x: sum(1 for word in query.lower().split() if word in x.lower()),
-        reverse=True
-    )
-    return ranked[:top_k] if ranked else []
+        return ""
+    with open(DATA_STORE, "r", encoding="utf-8") as f:
+        return json.load(f).get("data", "")
 
 # --- UI Layout ---
 tab1, tab2 = st.tabs(["Dev", "User"])
@@ -151,9 +132,8 @@ with tab1:
                     df_preview = pd.read_excel(uploaded_file, engine='openpyxl')
                     raw_text = df_preview.to_string(index=False)
 
-                chunks = chunk_text(raw_text)
-                save_data(chunks)
-                st.success(f"Uploaded and saved internal data.")
+                save_data(raw_text)
+                st.success("✅ File uploaded and saved to `knowledge_data.json`.")
 
                 if df_preview is not None:
                     st.subheader("Data Preview")
@@ -164,16 +144,6 @@ with tab1:
             except Exception as e:
                 st.error(f"❌ Failed to read file: {e}")
 
-        # 🔍 Display the current saved knowledge data
-        st.subheader("📘 Stored Knowledge Chunks")
-        stored_chunks = load_data()
-        if stored_chunks:
-            for i, chunk in enumerate(stored_chunks):
-                st.text_area(f"Chunk {i+1}", chunk, height=100, key=f"chunk_{i}")
-        else:
-            st.info("No knowledge data saved yet.")
-
-
 # --- Chat UI ---
 with tab2:
     st.title("Fraoula")
@@ -181,7 +151,7 @@ with tab2:
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    chunks = load_data()
+    context = load_data()
 
     chat_container = st.container()
     with chat_container:
@@ -200,12 +170,9 @@ with tab2:
             user_msg = user_input.strip()
             st.session_state.chat_history.append({"role": "user", "content": user_msg})
 
-            matches = keyword_search(user_msg, chunks)
-            context = "\n---\n".join(matches)
-
             messages = []
             if context:
-                messages.append({"role": "system", "content": f"Use this info:\n{context}"})
+                messages.append({"role": "system", "content": f"Use this knowledge:\n{context}"})
             messages += [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_history]
 
             payload = {
