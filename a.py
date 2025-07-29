@@ -200,7 +200,7 @@ with tab2:
             messages += [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_history]
 
             payload = {
-                "model": "meta-llama/llama-3.3-8b-instruct:free",
+                "model": "deepseek/deepseek-chat-v3-0324:free",
                 "messages": messages,
                 "max_tokens": 300,
                 "temperature": 0.7
