@@ -200,9 +200,9 @@ with tab2:
             messages += [{"role": m["role"], "content": m["content"]} for m in st.session_state.chat_history]
 
             payload = {
-                "model": "deepseek/deepseek-chat-v3-0324:free",
+                "model": "deepseek/deepseek-chat:free",
                 "messages": messages,
-                "max_tokens": 300,
+                "max_tokens": 500,
                 "temperature": 0.7
             }
 
@@ -216,3 +216,4 @@ with tab2:
 
             st.session_state.chat_history.append({"role": "assistant", "content": bot_reply})
             st.rerun()
+
